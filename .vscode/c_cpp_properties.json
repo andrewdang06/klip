@@ -1,0 +1,23 @@
+{
+  "configurations": [
+    {
+      "name": "x64",
+      "configurationProvider": "ms-vscode.cmake-tools",
+      "includePath": [
+        "${workspaceFolder}/include",
+        "${workspaceFolder}/src"
+      ],
+      "defines": [
+        "_DEBUG",
+        "UNICODE",
+        "_UNICODE",
+        "NOMINMAX",
+        "WINRT_LEAN_AND_MEAN"
+      ],
+      "cStandard": "c17",
+      "cppStandard": "c++20",
+      "intelliSenseMode": "windows-msvc-x64"
+    }
+  ],
+  "version": 4
+}

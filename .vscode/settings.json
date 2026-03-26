@@ -1,0 +1,14 @@
+{
+  "git.openRepositoryInParentFolders": "never",
+  "git.autoRepositoryDetection": "openEditors",
+  "git.ignoredRepositories": [
+    "C:\\Users\\flamj"
+  ],
+  "C_Cpp.default.cppStandard": "c++20",
+  "C_Cpp.default.intelliSenseMode": "windows-msvc-x64",
+  "cmake.generator": "Visual Studio 17 2022",
+  "cmake.buildDirectory": "${workspaceFolder}/build-vs",
+  "cmake.configureSettings": {
+    "FFMPEG_ROOT": "C:/Users/flamj/AppData/Local/Microsoft/WinGet/Packages/Gyan.FFmpeg.Shared_Microsoft.Winget.Source_8wekyb3d8bbwe/ffmpeg-8.1-full_build-shared"
+  }
+}

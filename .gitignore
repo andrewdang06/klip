@@ -1,0 +1,31 @@
+# Build outputs
+/build/
+/build-*/
+/CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+
+# VS / VS Code
+.vs/
+.vscode/*.db
+.vscode/ipch/
+*.VC.db
+*.VC.opendb
+*.suo
+*.user
+*.ipch
+
+# Binaries and intermediates
+*.obj
+*.o
+*.pdb
+*.ilk
+*.idb
+*.lib
+*.exp
+*.dll
+*.exe
+
+# Runtime output
+/clips/

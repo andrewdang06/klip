@@ -1,0 +1,1 @@
+Welcome to my current project Klip. This is a C++ lightweight low latency clipping software for gamers. Current bugs: Audio, and stutters during video recording. Otherwise it currently only takes up 100mb of RAM and is approximately 20-30% less lightweight than OBS/Nvidia Shadowplay.

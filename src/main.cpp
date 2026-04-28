@@ -356,6 +356,7 @@ class CaptureEngine {
       winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool const& sender,
       winrt::Windows::Foundation::IInspectable const&);
   void ProcessingLoop();
+  void EncodeLoop();
   void TargetLoop();
 
   bool CopyCodecSnapshot(CodecSnapshot& snapshot);
@@ -438,9 +439,11 @@ class CaptureEngine {
 
   PacketRingBuffer packet_buffer_{16384, AVRational{1, 10'000'000}};
   SpscRingQueue<RawFrame, 256> raw_queue_;
+  SpscRingQueue<ConvertedFrame, 128> encode_queue_;
   std::function<bool(CodecSnapshot&)> audio_snapshot_provider_;
 
   std::thread processing_thread_;
+  std::thread encode_thread_;
   std::thread target_thread_;
   std::thread save_thread_;
 };
@@ -1513,6 +1516,7 @@ bool CaptureEngine::Initialize(ID3D11Device* device,
   running_.store(true, std::memory_order_release);
 
   processing_thread_ = std::thread(&CaptureEngine::ProcessingLoop, this);
+  encode_thread_ = std::thread(&CaptureEngine::EncodeLoop, this);
   target_thread_ = std::thread(&CaptureEngine::TargetLoop, this);
 
   initialized_.store(true, std::memory_order_release);
@@ -1525,6 +1529,9 @@ void CaptureEngine::Shutdown() {
 
   if (!running_.exchange(false, std::memory_order_acq_rel)) {
     JoinThread(save_thread_);
+    JoinThread(encode_thread_);
+    JoinThread(processing_thread_);
+    JoinThread(target_thread_);
     CleanupEncoder();
     CleanupFenceObjects();
     CleanupCaptureSession();
@@ -1546,6 +1553,7 @@ void CaptureEngine::Shutdown() {
 
   JoinThread(target_thread_);
   JoinThread(processing_thread_);
+  JoinThread(encode_thread_);
 
   CleanupEncoder();
   JoinThread(save_thread_);
@@ -2444,6 +2452,22 @@ void CaptureEngine::ProcessingLoop() {
       continue;
     }
 
+    if (!encode_queue_.try_push(std::move(converted))) {
+      // Encoder is behind. Drop instead of pushing latency back into capture.
+    }
+  }
+}
+
+void CaptureEngine::EncodeLoop() {
+  using namespace std::chrono_literals;
+
+  while (running_.load(std::memory_order_acquire)) {
+    ConvertedFrame converted;
+    if (!encode_queue_.try_pop(converted)) {
+      std::this_thread::sleep_for(1ms);
+      continue;
+    }
+
     if (FAILED(fence_->SetEventOnCompletion(converted.fence_value, fence_event_))) {
       SetError("Failed to wait on the D3D11 fence.");
       continue;
@@ -2585,7 +2609,8 @@ bool CaptureEngine::WriteMp4File(const std::wstring& path,
   bool ok = false;
   AVStream* video_stream = nullptr;
   AVStream* audio_stream = nullptr;
-  int64_t base_ts = AV_NOPTS_VALUE;
+  constexpr AVRational kCommonPacketTimeBase{1, 10'000'000};
+  int64_t base_ts_100ns = AV_NOPTS_VALUE;
 
   video_stream = avformat_new_stream(format_ctx, nullptr);
   if (video_stream == nullptr) {
@@ -2630,6 +2655,14 @@ bool CaptureEngine::WriteMp4File(const std::wstring& path,
       continue;
     }
 
+    AVRational source_time_base = video_snapshot.time_base;
+    if (buffered.kind == PacketKind::kAudio) {
+      if (audio_snapshot == nullptr) {
+        continue;
+      }
+      source_time_base = audio_snapshot->time_base;
+    }
+
     const AVPacket* packet = buffered.packet.get();
     const int64_t candidate =
         packet->dts != AV_NOPTS_VALUE ? packet->dts : packet->pts;
@@ -2637,12 +2670,14 @@ bool CaptureEngine::WriteMp4File(const std::wstring& path,
       continue;
     }
 
-    if (base_ts == AV_NOPTS_VALUE || candidate < base_ts) {
-      base_ts = candidate;
+    const int64_t candidate_100ns =
+        av_rescale_q(candidate, source_time_base, kCommonPacketTimeBase);
+    if (base_ts_100ns == AV_NOPTS_VALUE || candidate_100ns < base_ts_100ns) {
+      base_ts_100ns = candidate_100ns;
     }
   }
-  if (base_ts == AV_NOPTS_VALUE) {
-    base_ts = 0;
+  if (base_ts_100ns == AV_NOPTS_VALUE) {
+    base_ts_100ns = 0;
   }
 
   for (const auto& buffered : packets) {
@@ -2669,13 +2704,15 @@ bool CaptureEngine::WriteMp4File(const std::wstring& path,
     }
 
     out->stream_index = stream->index;
-    av_packet_rescale_ts(out, source_time_base, stream->time_base);
+    const int64_t base_ts_source =
+        av_rescale_q(base_ts_100ns, kCommonPacketTimeBase, source_time_base);
     if (out->pts != AV_NOPTS_VALUE) {
-      out->pts = std::max<int64_t>(0, out->pts - base_ts);
+      out->pts = std::max<int64_t>(0, out->pts - base_ts_source);
     }
     if (out->dts != AV_NOPTS_VALUE) {
-      out->dts = std::max<int64_t>(0, out->dts - base_ts);
+      out->dts = std::max<int64_t>(0, out->dts - base_ts_source);
     }
+    av_packet_rescale_ts(out, source_time_base, stream->time_base);
     if (out->pts == AV_NOPTS_VALUE && out->dts != AV_NOPTS_VALUE) {
       out->pts = out->dts;
     }
@@ -3200,8 +3237,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
   }
 
   engine.SetAudioSnapshotProvider({});
-  audio.Shutdown();
   engine.Shutdown();
+  audio.Shutdown();
 
   ImGui_ImplDX11_Shutdown();
   ImGui_ImplWin32_Shutdown();
